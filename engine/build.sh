@@ -62,12 +62,13 @@ if [[ ! -f $build/Makefile ]]; then
   ( cd "$build"
     export MACOSX_DEPLOYMENT_TARGET=14.0
     # Only configure runs under Rosetta so it detects an x86_64 host; clang cross-compiles with -arch.
+    # --without-opengl only drops EGL/X11 OpenGL; the Mac driver still provides OpenGL (as in Gcenx's builds).
     $X86 "$src/configure" --prefix="$stage" \
       --enable-archs=i386,x86_64 --disable-tests --disable-winebth_sys --disable-winemenubuilder \
       --without-alsa --without-capi --with-coreaudio --without-dbus --without-ffmpeg \
       --without-fontconfig --with-freetype --without-gettext --without-gettextpo --without-gphoto \
       --with-gnutls --without-gssapi --without-gstreamer --without-inotify --without-krb5 \
-      --without-netapi --with-opengl --without-oss --without-pcap --without-pulse --without-sane \
+      --without-netapi --without-opengl --without-oss --without-pcap --without-pulse --without-sane \
       --with-sdl --without-udev --without-usb --without-v4l2 --with-vulkan --without-wayland --without-x \
       CC="$CLANG -arch x86_64 -isysroot $SDK" CXX="$CLANGXX -arch x86_64 -isysroot $SDK" \
       OBJC="$CLANG -arch x86_64 -isysroot $SDK" \
