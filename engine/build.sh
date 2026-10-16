@@ -37,6 +37,12 @@ if [[ ! -e $libs/libfreetype.6.dylib ]]; then
     jq -r '.assets | map(select(.name | test("^Template-[0-9.]+\\.tar\\.xz$"))) | sort_by(.updated_at) | last | .browser_download_url')
   rm -rf "$libs"; mkdir -p "$libs"
   curl -fsSL "$url" | tar -xJf - -C "$libs" --strip-components=3 "${${url:t}%.tar.xz}.app/Contents/Frameworks"
+  # Build tools (sfnt2fon…) load these directly, and they find each other through @rpath:
+  # point it at their own folder. macOS strips DYLD_* through make's /bin/sh, so that won't do.
+  for lib in $libs/*.dylib(N.); do
+    install_name_tool -add_rpath @loader_path "$lib" 2>/dev/null || true
+    codesign -f -s - "$lib" 2>/dev/null
+  done
 fi
 for lib in libfreetype.6.dylib libgnutls.30.dylib libSDL2-2.0.0.dylib libvulkan.1.dylib; do
   [[ -e $libs/$lib ]] || die "$lib missing from the Template"
