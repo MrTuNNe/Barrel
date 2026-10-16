@@ -3,14 +3,40 @@ import SwiftUI
 @main
 struct BarrelApp: App {
     @State private var store = Store()
+    @AppStorage(Store.autoUpdateKey) private var autoUpdate = true
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(store)
-                .task { await store.refresh() }
+                .task {
+                    await store.refresh()
+                    // Check once a day, the first time right after launch.
+                    while !Task.isCancelled {
+                        if autoUpdate && store.updateCheckDue { await store.checkForUpdates(automatic: true) }
+                        try? await Task.sleep(for: .seconds(3600))
+                    }
+                }
         }
         .defaultSize(width: 860, height: 560)
+
+        Settings {
+            SettingsView()
+        }
+    }
+}
+
+struct SettingsView: View {
+    @AppStorage(Store.autoUpdateKey) private var autoUpdate = true
+
+    var body: some View {
+        Form {
+            Toggle("Update Wine automatically", isOn: $autoUpdate)
+            Text("Barrel checks once a day and installs new versions of Wine and the graphics libraries when no Windows program is running.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+        .frame(width: 420)
     }
 }
 
@@ -46,9 +72,9 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await store.task("Updating Wine", ["update"]) }
-                } label: { Label("Update Wine", systemImage: "arrow.down.circle") }
-                    .help("Download the newest Wine and graphics layers")
+                    Task { await store.checkForUpdates(automatic: false) }
+                } label: { Label("Check for Wine Updates", systemImage: "arrow.down.circle") }
+                    .help("Check for and install the newest Wine and graphics libraries")
                     .disabled(!store.isInstalled || store.busy != nil)
             }
         }
@@ -59,6 +85,9 @@ struct ContentView: View {
             Button("OK") { store.error = nil }
         } message: {
             Text(store.error ?? "")
+        }
+        .alert(store.notice ?? "", isPresented: .constant(store.notice != nil)) {
+            Button("OK") { store.notice = nil }
         }
         .onAppear { if selection == nil { selection = store.bottles.first?.name } }
         .onChange(of: store.bottles) { if selection == nil { selection = store.bottles.first?.name } }

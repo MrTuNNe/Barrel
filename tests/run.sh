@@ -6,7 +6,7 @@ here=${0:A:h}
 barrel=${1:-$here/../cli/barrel}
 bottle=barrel-test
 
-[[ -d "$HOME/Library/Application Support/Barrel/bottles/$bottle" ]] || $barrel new $bottle >/dev/null
+[[ -d "${BARREL_HOME:-$HOME/Library/Application Support/Barrel}/bottles/$bottle" ]] || $barrel new $bottle >/dev/null
 
 # run_one <exe> <api>: prints the test's result line (30 s limit; the first run compiles shaders)
 run_one() {

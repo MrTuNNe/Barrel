@@ -19,6 +19,10 @@ struct Program: Identifiable, Hashable {
     var name: String { url.deletingPathExtension().lastPathComponent }
 }
 
+private struct CheckOutput: Codable {
+    let updates: [String]
+}
+
 private struct ListOutput: Codable {
     let engines: [String]
     let runtime: String
@@ -34,8 +38,9 @@ final class Store {
     var busy: String?          // what a long task is doing, nil when idle
     var output = ""            // output of the last long task
     var error: String?
+    var notice: String?
 
-    var isInstalled: Bool { engines.contains { $0.hasPrefix("sikarugir-") } && !runtime.isEmpty }
+    var isInstalled: Bool { engines.contains { $0.hasPrefix("barrel-") || $0.hasPrefix("sikarugir-") } && !runtime.isEmpty }
 
     /// The CLI ships inside the app; during development it sits next to the package.
     let cli: String = Bundle.main.path(forResource: "barrel", ofType: nil)
@@ -64,6 +69,49 @@ final class Store {
         if status != 0 { error = output.isEmpty ? "\(title) failed." : output }
         await refresh()
         return status == 0
+    }
+
+    // MARK: Wine updates
+
+    static let autoUpdateKey = "autoUpdate", lastCheckKey = "lastUpdateCheck"
+
+    /// True when the last successful check is more than a day old.
+    var updateCheckDue: Bool {
+        Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: Self.lastCheckKey) > 24 * 3600
+    }
+
+    /// Looks for newer Wine and graphics builds and installs them. Automatic checks stay quiet,
+    /// and wait while a Windows program is running so its engine isn't replaced under it.
+    func checkForUpdates(automatic: Bool) async {
+        guard isInstalled, busy == nil else { return }
+        let (status, text) = await exec(["check", "--json"], stream: false)
+        guard status == 0, let data = text.data(using: .utf8),
+              let result = try? JSONDecoder().decode(CheckOutput.self, from: data) else {
+            if !automatic { error = "Couldn't check for updates:\n\(text)" }
+            return
+        }
+        if result.updates.isEmpty {
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.lastCheckKey)
+            if !automatic { notice = "Wine and the graphics libraries are up to date." }
+            return
+        }
+        if wineIsRunning() {
+            if !automatic { error = "Quit your Windows programs first, then update.\n\n" + result.updates.joined(separator: "\n") }
+            return
+        }
+        if await task("Updating " + result.updates.joined(separator: ", "), ["update"]) {
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.lastCheckKey)
+        }
+    }
+
+    private func wineIsRunning() -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-x", "wineserver"]
+        p.standardOutput = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
     }
 
     func set(_ bottle: Bottle, _ key: String, _ value: String) async {

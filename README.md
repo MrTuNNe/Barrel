@@ -4,13 +4,31 @@ Run Windows games and programs on your Mac. A maintained replacement for [Whisky
 
 > "Barrel" is a working title.
 
-Barrel has no Wine fork of its own. It downloads the newest builds of maintained projects:
+Barrel builds its own Wine and gets everything else from maintained projects:
 
 | Part | Source | Used for |
 |---|---|---|
-| Wine 10 (Sikarugir, based on CrossOver) | [Sikarugir-App/Engines](https://github.com/Sikarugir-App/Engines) | the engine for games |
+| Barrel Wine (CrossOver sources, Wine 11) | built by this repo's CI, see below | the engine for games |
+| Wine 10 (Sikarugir, based on CrossOver) | [Sikarugir-App/Engines](https://github.com/Sikarugir-App/Engines) | fallback engine |
 | D3DMetal, DXMT, DXVK, KosmicKrisp Vulkan, GStreamer | [Sikarugir-App/Template](https://github.com/Sikarugir-App/Template) | DirectX on Metal, video, fonts |
 | Wine Staging, latest (optional) | [Gcenx/macOS_Wine_builds](https://github.com/Gcenx/macOS_Wine_builds) | plain upstream Wine |
+
+## Barrel Wine
+
+`.github/workflows/wine.yml` runs every day. When CodeWeavers publishes a new [CrossOver open-source release](https://www.codeweavers.com/crossover/source), the workflow:
+
+1. builds it on an Apple Silicon runner with `engine/build.sh`, applying the patches in `engine/patches`;
+2. checks that a bottle starts and the fonts work, then runs the graphics tests;
+3. publishes the result as a `wine-cx-<version>` release.
+
+Barrel installs the newest of those releases (`barrel update`, or automatically in the app). The only patch so far adds `WINEDLLPATH_PREPEND`, so D3DMetal, DXMT and DXVK can replace Wine's own Direct3D DLLs. The build steps follow [pedrosimoess/wine-macos27-steam-build](https://github.com/pedrosimoess/wine-macos27-steam-build).
+
+To build locally (about 6 GB of disk):
+
+```bash
+engine/build.sh 26.3.0
+BARREL_ENGINE_TARBALL=dist/barrel-wine-26.3.0.tar.xz cli/barrel setup
+```
 
 ## Requirements
 
@@ -75,7 +93,7 @@ x86_64-w64-mingw32-clang++ -O1 -o tests/fonttest.exe tests/fonttest.cpp -static 
 
 ## Known limits
 
-- Sikarugir's Wine 11 engines only start inside the Sikarugir app, so Barrel skips them and uses Wine 10. The `staging` engine is upstream Wine 11 but only has wined3d.
+- Sikarugir's Wine 11 engines only start inside the Sikarugir app, so Barrel skips them; its fallback is their Wine 10. The `staging` engine is upstream Wine but only has wined3d.
 - Games with kernel-level anti-cheat (Valorant, Fortnite and many online shooters) don't run under any Wine.
 
 ## License

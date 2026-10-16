@@ -57,7 +57,8 @@ struct BottleView: View {
             }
 
             Section("Bottle") {
-                LabeledContent("Engine", value: bottle.engine == "staging" ? "Wine Staging (upstream)" : "Wine (Sikarugir)")
+                LabeledContent("Engine", value: ["barrel": "Barrel Wine (CrossOver)", "sikarugir": "Wine (Sikarugir)",
+                                                 "staging": "Wine Staging (upstream)"][bottle.engine] ?? bottle.engine)
                 HStack {
                     Button("Open C: Drive") { NSWorkspace.shared.open(bottle.driveC) }
                     Button("Wine Configuration") { store.launch(bottle, ["cfg", bottle.name]) }

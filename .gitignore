@@ -2,3 +2,6 @@ build/
 app/.build/
 tests/*.exe
 .DS_Store
+.engine-build/
+dist/
+.barrel-home/
