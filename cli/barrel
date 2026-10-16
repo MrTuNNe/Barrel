@@ -95,7 +95,7 @@ install_barrel() {
   fi
   ver=${${name#barrel-wine-}%.tar.xz}
   dir="$DATA/engines/barrel-$ver"
-  [[ -d $dir ]] || unpack "$url" "$dir" 0 .
+  [[ -d $dir ]] || unpack "$url" "$dir" 0
   prune "$DATA/engines" 'barrel-*' "$dir"
   info "Engine: Barrel Wine (CrossOver $ver)"
 }
@@ -233,7 +233,10 @@ wine_env() {
     local layer
     case $RENDERER in
       d3dmetal) layer=$rd/d3dmetal/wine; export WINEDLLPATH_D3DMETAL=$layer CX_APPLEGPTK_LIBD3DSHARED_PATH="$rd/d3dmetal/external/libd3dshared.dylib" ;;
-      dxmt)     layer=$rd/dxmt/wine; export WINEDLLPATH_DXMT=$layer ;;
+      dxmt)     layer=$rd/dxmt/wine; export WINEDLLPATH_DXMT=$layer
+                # Wine only loads a builtin DLL that has a placeholder in system32 (DXMT's install guide).
+                cp -n "$layer/x86_64-windows/winemetal.dll" "$1/drive_c/windows/system32/" 2>/dev/null || true
+                cp -n "$layer/i386-windows/winemetal.dll" "$1/drive_c/windows/syswow64/" 2>/dev/null || true ;;
       dxvk)     layer=$rd/dxvk3/wine; export WINEDLLPATH_DXVK=$layer MVK_CONFIG_RESUME_LOST_DEVICE=1 ;;
     esac
     [[ -n ${layer:-} ]] && export WINEDLLPATH_PREPEND=$layer

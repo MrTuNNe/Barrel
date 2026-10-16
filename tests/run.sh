@@ -4,7 +4,7 @@
 set -uo pipefail
 here=${0:A:h}
 barrel=${1:-$here/../cli/barrel}
-bottle=barrel-test
+bottle=${BARREL_TEST_BOTTLE:-barrel-test}
 
 [[ -d "${BARREL_HOME:-$HOME/Library/Application Support/Barrel}/bottles/$bottle" ]] || $barrel new $bottle >/dev/null
 
