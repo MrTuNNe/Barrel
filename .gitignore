@@ -1,0 +1,4 @@
+build/
+app/.build/
+tests/*.exe
+.DS_Store

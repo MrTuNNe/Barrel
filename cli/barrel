@@ -1,0 +1,383 @@
+#!/bin/zsh
+# Barrel — run Windows programs and games on macOS.
+# Engine: Sikarugir Wine (CrossOver based) + D3DMetal / DXMT / DXVK; optional upstream Wine Staging.
+set -euo pipefail
+
+SELF=${0:A}
+DATA="${BARREL_HOME:-$HOME/Library/Application Support/Barrel}"
+CACHE="$HOME/Library/Caches/Barrel"
+API=https://api.github.com/repos
+RENDERERS=(d3dmetal dxmt dxvk wined3d)
+
+die()  { print -u2 -r -- "barrel: $*"; exit 1 }
+info() { print -r -- "» $*" }
+
+usage() {
+  cat <<'EOF'
+Barrel — Windows programs and games on your Mac
+
+  barrel setup [--staging]           install Wine and the graphics layers (plus Wine Staging)
+  barrel update                      fetch the newest versions, remove old ones
+  barrel new <bottle> [staging]      create a bottle (a separate Windows install)
+  barrel list [--json]               bottles and installed versions
+  barrel run <bottle> <file> [args]  run a .exe / .msi / .bat / .lnk (creates the bottle if needed)
+  barrel set <bottle> renderer d3dmetal|dxmt|dxvk|wined3d
+  barrel set <bottle> engine sikarugir|staging
+  barrel set <bottle> hud on|off     Metal performance HUD
+  barrel set <bottle> retina on|off  full Retina resolution
+  barrel app <bottle> <file> [Name]  add a launcher to ~/Applications
+  barrel cfg <bottle>                winecfg
+  barrel tricks <bottle> <verbs..>   winetricks (e.g. vcrun2022 corefonts)
+  barrel c <bottle>                  open C:\ in Finder
+  barrel kill <bottle>               stop everything running in the bottle
+  barrel rm <bottle> [--yes]         delete the bottle
+
+Default renderer: d3dmetal (DirectX 11/12; 32-bit programs get dxmt automatically).
+If a game fails, try dxmt (DX10/11), then dxvk (DX9-11 over Vulkan), then wined3d (OpenGL, old games).
+EOF
+}
+
+# ---------------------------------------------------------------- downloads
+
+# assets <repo> <release> <regex>: "name<TAB>url", newest first
+assets() {
+  local json
+  json=$(curl -fsSL "$API/$1/releases/$2") ||
+    die "Can't read releases from GitHub ($1). Check your connection or try again in an hour."
+  print -r -- "$json" | jq -r --arg re "$3" '.assets | map(select(.name | test($re)))
+    | sort_by(.updated_at) | reverse | .[] | "\(.name)\t\(.browser_download_url)"'
+}
+
+# unpack <url> <dest> <strip> <members...>: download, extract members into dest, delete the archive
+unpack() {
+  local url=$1 dest=$2 strip=$3; shift 3
+  local f="$CACHE/${url:t}" tmp
+  mkdir -p "$CACHE" "${dest:h}"
+  info "Downloading ${url:t}…"
+  curl -fL --progress-bar -o "$f" "$url"
+  tmp=$(mktemp -d "${dest:h}/.tmp.XXXXXX")
+  info "Extracting…"
+  tar -xJf "$f" -C "$tmp" --strip-components="$strip" "$@" || { rm -rf "${tmp:?}"; die "Extraction failed." }
+  mv "$tmp" "$dest"
+  rm -f "$f"
+}
+
+# newest <dir> <pattern>: newest subdirectory (numeric sort)
+newest() {
+  local d=( $1/${~2}(N/nOn[1]) )
+  (( $#d )) && print -r -- $d[1]
+}
+
+# prune <dir> <pattern> <keep>: remove old versions
+prune() {
+  local d
+  for d in $1/${~2}(N/); do [[ $d == $3 ]] || rm -rf "${d:?}"; done
+}
+
+install_sikarugir() {
+  local list line name url ver dir blocked="$DATA/engines/.blocked"
+  mkdir -p "$DATA/engines"; touch "$blocked"
+  list=$(assets Sikarugir-App/Engines tags/v1.0 '^WS12WineSikarugir[0-9._]+\.tar\.xz$')
+  for line in ${(f)list}; do
+    name=${line%%$'\t'*} url=${line#*$'\t'}
+    grep -qxF "$name" "$blocked" && continue
+    ver=${${name#WS12WineSikarugir}%.tar.xz}
+    dir="$DATA/engines/sikarugir-$ver"
+    if [[ ! -d $dir ]]; then
+      unpack "$url" "$dir" 1 wswine.bundle
+      # Some engines (Wine 11) only start inside the Sikarugir app; skip those.
+      if grep -qa SikarugirAppWine "$dir/lib/wine/x86_64-unix/ntdll.so"; then
+        info "$name only runs inside the Sikarugir app; skipping it."
+        print -r -- "$name" >> "$blocked"; rm -rf "${dir:?}"; continue
+      fi
+    fi
+    prune "$DATA/engines" 'sikarugir-*' "$dir"
+    info "Engine: Wine sikarugir-$ver"
+    return 0
+  done
+  [[ -n $(newest "$DATA/engines" 'sikarugir-*') ]] || die "No usable Sikarugir engine found."
+}
+
+install_runtime() {
+  local lines name url ver dir rd
+  lines=( ${(f)"$(assets Sikarugir-App/Template tags/v1.0 '^Template-[0-9.]+\.tar\.xz$')"} )
+  name=${lines[1]%%$'\t'*} url=${lines[1]#*$'\t'}
+  ver=${${name#Template-}%.tar.xz}
+  dir="$DATA/runtime/$ver"
+  [[ -d $dir ]] || unpack "$url" "$dir" 2 "Template-$ver.app/Contents/Frameworks" "Template-$ver.app/Contents/SharedSupport/renderer"
+  prune "$DATA/runtime" '*' "$dir"
+  rd="$dir/SharedSupport/renderer"
+  info "Libraries and graphics: $ver (D3DMetal $(plutil -extract CFBundleShortVersionString raw "$rd/d3dmetal/external/D3DMetal.framework/Resources/Info.plist" 2>/dev/null), DXMT $(<"$rd/dxmt/version"), $(<"$rd/dxvk3/version"))"
+}
+
+install_staging() {
+  local lines name url ver dir
+  lines=( ${(f)"$(assets Gcenx/macOS_Wine_builds latest '^wine-staging-.*\.tar\.xz$')"} )
+  name=${lines[1]%%$'\t'*} url=${lines[1]#*$'\t'}
+  ver=${${name#wine-staging-}%-osx64.tar.xz}
+  dir="$DATA/engines/staging-$ver"
+  [[ -d $dir ]] || unpack "$url" "$dir" 4 "Wine Staging.app/Contents/Resources/wine"
+  prune "$DATA/engines" 'staging-*' "$dir"
+  info "Engine: Wine Staging $ver"
+}
+
+cmd_setup() {
+  [[ $(uname -m) == arm64 ]] && ! arch -x86_64 /usr/bin/true 2>/dev/null &&
+    die "Rosetta 2 is missing. Install it with: softwareupdate --install-rosetta"
+  command -v jq >/dev/null || die "jq is missing (ships with macOS 15+; otherwise: brew install jq)"
+  install_sikarugir
+  install_runtime
+  if [[ ${1:-} == --staging || -n $(newest "$DATA/engines" 'staging-*') ]]; then install_staging; fi
+  info "Done. Create a bottle: barrel new games"
+}
+
+# ---------------------------------------------------------------- bottles
+
+bottle() {
+  local b="$DATA/bottles/${1:?missing bottle name}"
+  [[ -d $b ]] || die "No bottle named \"$1\". See: barrel list"
+  print -r -- "$b"
+}
+
+load_conf() {
+  ENGINE=sikarugir RENDERER=d3dmetal HUD=off RETINA=off
+  [[ -f $1/barrel.conf ]] && source "$1/barrel.conf"
+  return 0
+}
+
+save_conf() { print -rl -- "ENGINE=$ENGINE" "RENDERER=$RENDERER" "HUD=$HUD" "RETINA=$RETINA" > "$1/barrel.conf" }
+
+# wine_env <bottle> [32]: sets WINE, WINESERVER and the environment for the engine + renderer
+wine_env() {
+  load_conf "$1"
+  # D3DMetal is 64-bit only; 32-bit programs get DXMT.
+  [[ $RENDERER == d3dmetal && ${2:-} == 32 ]] && RENDERER=dxmt
+  local e rt fw rd
+  e=$(newest "$DATA/engines" "$ENGINE-*") || die "Engine $ENGINE is not installed. Run: barrel setup"
+  export WINEPREFIX="$1" WINEDEBUG="${WINEDEBUG:--all}" WINEBOOT_HIDE_DIALOG=1 ROSETTA_ADVERTISE_AVX=1
+  if [[ $ENGINE == sikarugir ]]; then
+    rt=$(newest "$DATA/runtime" '*') || die "Libraries are missing. Run: barrel setup"
+    fw="$rt/Frameworks" rd="$rt/SharedSupport/renderer"
+    export DYLD_FALLBACK_LIBRARY_PATH="$fw:$fw/GStreamer.framework/Libraries:/usr/lib"
+    export GST_PLUGIN_PATH="$fw/GStreamer.framework/Libraries/gstreamer-1.0" WINEMSYNC=1
+    # The Vulkan loader needs a manifest for the driver (Mesa KosmicKrisp, Vulkan on Metal).
+    export VK_DRIVER_FILES="$rt/vulkan_icd.json"
+    print -r -- '{"file_format_version":"1.0.1","ICD":{"library_path":"'"$fw"'/libvulkan_kosmickrisp.dylib","api_version":"1.3.0"}}' > "$VK_DRIVER_FILES"
+    case $RENDERER in
+      d3dmetal) export WINEDLLPATH_D3DMETAL="$rd/d3dmetal/wine" CX_APPLEGPTK_LIBD3DSHARED_PATH="$rd/d3dmetal/external/libd3dshared.dylib" ;;
+      dxmt)     export WINEDLLPATH_DXMT="$rd/dxmt/wine" ;;
+      dxvk)     export WINEDLLPATH_DXVK="$rd/dxvk3/wine" MVK_CONFIG_RESUME_LOST_DEVICE=1 ;;
+    esac
+  fi
+  [[ $HUD == on ]] && export MTL_HUD_ENABLED=1
+  WINE="$e/bin/wine" WINESERVER="$e/bin/wineserver"
+}
+
+# wrapper <name> <target>: script that keeps DYLD_* (macOS strips them when going through /bin/sh)
+wrapper() {
+  local w="$DATA/.bin/$ENGINE-$1"
+  mkdir -p "${w:h}"
+  print -r -- '#!/bin/zsh' > "$w"
+  [[ -n ${DYLD_FALLBACK_LIBRARY_PATH:-} ]] && print -r -- "export DYLD_FALLBACK_LIBRARY_PATH=${(q)DYLD_FALLBACK_LIBRARY_PATH}" >> "$w"
+  print -r -- "exec ${(q)2} \"\$@\"" >> "$w"
+  chmod +x "$w"
+  print -r -- "$w"
+}
+
+SYSFONTS=/System/Library/Fonts
+# Windows font file -> the macOS font closest to it (same idea as Proton's bundled fonts).
+WINFONTS=(
+  arial.ttf Supplemental/Arial.ttf             arialbd.ttf Supplemental/'Arial Bold.ttf'
+  ariali.ttf Supplemental/'Arial Italic.ttf'   arialbi.ttf Supplemental/'Arial Bold Italic.ttf'
+  times.ttf Supplemental/'Times New Roman.ttf' timesbd.ttf Supplemental/'Times New Roman Bold.ttf'
+  cour.ttf Supplemental/'Courier New.ttf'      courbd.ttf Supplemental/'Courier New Bold.ttf'
+  verdana.ttf Supplemental/Verdana.ttf         verdanab.ttf Supplemental/'Verdana Bold.ttf'
+  georgia.ttf Supplemental/Georgia.ttf         trebuc.ttf Supplemental/'Trebuchet MS.ttf'
+  comic.ttf Supplemental/'Comic Sans MS.ttf'   impact.ttf Supplemental/Impact.ttf
+  msgothic.ttc 'ヒラギノ角ゴシック W3.ttc'      msmincho.ttc 'ヒラギノ明朝 ProN.ttc'
+  meiryo.ttc 'ヒラギノ角ゴシック W3.ttc'        yugothm.ttc 'ヒラギノ角ゴシック W3.ttc'
+  simsun.ttc Supplemental/Songti.ttc           msyh.ttc 'STHeiti Light.ttc'
+  simhei.ttf 'STHeiti Medium.ttc'              malgun.ttf AppleSDGothicNeo.ttc
+)
+# Windows font family -> macOS family, for programs that ask Windows for a font by name.
+REPLACEMENTS=(
+  'MS Gothic' 'Hiragino Sans W3'  'MS PGothic' 'Hiragino Sans W3'  'MS UI Gothic' 'Hiragino Sans W3'
+  'Meiryo' 'Hiragino Sans W3'  'Meiryo UI' 'Hiragino Sans W3'  'Yu Gothic' 'Hiragino Sans W3'  'Yu Gothic UI' 'Hiragino Sans W3'
+  'MS Mincho' 'Hiragino Mincho ProN W3'  'MS PMincho' 'Hiragino Mincho ProN W3'  'Yu Mincho' 'Hiragino Mincho ProN W3'
+  'SimSun' 'Songti SC'  'NSimSun' 'Songti SC'  'SimHei' 'Heiti SC'  'Microsoft YaHei' 'Heiti SC'  'Microsoft YaHei UI' 'Heiti SC'
+  'MingLiU' 'Songti TC'  'PMingLiU' 'Songti TC'  'Microsoft JhengHei' 'Heiti TC'
+  'Malgun Gothic' 'Apple SD Gothic Neo'  'Gulim' 'Apple SD Gothic Neo'  'Dotum' 'Apple SD Gothic Neo'  'Batang' 'Apple SD Gothic Neo'
+  'Segoe UI' 'Helvetica Neue'  'Segoe UI Semibold' 'Helvetica Neue'
+)
+
+# install_fonts <bottle>: many engines (Unity, SDL_ttf…) read font files from C:\windows\Fonts
+# directly instead of asking Windows, so link the macOS fonts there, Proton style.
+install_fonts() {
+  local dir="$1/drive_c/windows/Fonts" f i
+  [[ -e $dir/.barrel-fonts ]] && return 0
+  mkdir -p "$dir"
+  for f in $SYSFONTS/*.(ttf|ttc|otf)(N) $SYSFONTS/Supplemental/*.(ttf|ttc|otf)(N) /Library/Fonts/*.(ttf|ttc|otf)(N); do
+    [[ -e $dir/${f:t} ]] || ln -s "$f" "$dir/${f:t}"
+  done
+  for (( i = 1; i < $#WINFONTS; i += 2 )); do
+    f="$SYSFONTS/${WINFONTS[i+1]}"
+    [[ -e $f && ! -e $dir/${WINFONTS[i]} ]] && ln -s "$f" "$dir/${WINFONTS[i]}"
+  done
+  local reg="$1/drive_c/barrel-fonts.reg"
+  print -rl -- 'REGEDIT4' '' '[HKEY_CURRENT_USER\Software\Wine\Fonts\Replacements]' > "$reg"
+  for (( i = 1; i < $#REPLACEMENTS; i += 2 )); do
+    print -r -- "\"${REPLACEMENTS[i]}\"=\"${REPLACEMENTS[i+1]}\"" >> "$reg"
+  done
+  "$WINE" regedit /S 'C:\barrel-fonts.reg' >/dev/null 2>&1 && touch "$dir/.barrel-fonts"
+  rm -f "$reg"
+}
+
+cmd_new() {
+  local name=${1:?Usage: barrel new <name> [staging]} b
+  [[ $name == */* || $name == .* ]] && die "A bottle name can't contain \"/\" or start with \".\"."
+  b="$DATA/bottles/$name"
+  [[ -e $b ]] && die "Bottle \"$name\" already exists."
+  mkdir -p "$b"
+  ENGINE=${2:-sikarugir} RENDERER=d3dmetal HUD=off RETINA=off
+  [[ $ENGINE == (sikarugir|staging) ]] || { rm -rf "${b:?}"; die "Unknown engine: $ENGINE" }
+  save_conf "$b"
+  wine_env "$b"
+  info "Creating bottle \"$name\" (takes about a minute)…"
+  "$WINE" wineboot -i >/dev/null 2>&1 || true
+  "$WINESERVER" -w
+  [[ -d $b/drive_c/windows ]] || die "Wine couldn't create the bottle. See: WINEDEBUG=err barrel cfg $name"
+  install_fonts "$b"
+  info "Done. Install something: barrel run $name ~/Downloads/Setup.exe"
+}
+
+cmd_list() {
+  local b engines=( $DATA/engines/*(N/:t) ) rt=( $DATA/runtime/*(N/:t) ) rows=()
+  if [[ ${1:-} == --json ]]; then
+    for b in $DATA/bottles/*(N/); do
+      load_conf "$b"
+      rows+=( "$(jq -nc --arg name "${b:t}" --arg path "$b" --arg engine "$ENGINE" --arg renderer "$RENDERER" \
+        --arg hud "$HUD" --arg retina "$RETINA" '$ARGS.named | .hud = (.hud == "on") | .retina = (.retina == "on")')" )
+    done
+    jq -nc --args '{engines: $ARGS.positional}' -- "${engines[@]}" |
+      jq -c --arg runtime "${rt[1]:-}" --argjson bottles "[${(j:,:)rows}]" '. + {runtime: $runtime, bottles: $bottles}'
+    return
+  fi
+  info "Engines: ${(j:, :)engines}"
+  info "Libraries and graphics: ${rt:-missing}"
+  for b in $DATA/bottles/*(N/); do
+    load_conf "$b"
+    [[ $ENGINE == staging ]] && RENDERER=wined3d
+    printf '  %-20s engine: %-10s renderer: %-9s hud: %-3s retina: %s\n' "${b:t}" "$ENGINE" "$RENDERER" "$HUD" "$RETINA"
+  done
+}
+
+# lnk_target <bottle> <file.lnk>: the macOS path of the .exe a Windows shortcut points to, if found
+lnk_target() {
+  local t
+  t=$(strings -n 6 "$2" | grep -m1 -iE '^[a-z]:\\.*\.exe$') || return 0
+  t="$1/drive_${${t[1]}:l}/${${t:3}//\\//}"
+  [[ -f $t ]] && print -r -- "$t"
+}
+
+cmd_run() {
+  local b f exe bits=64
+  f=${2:?Usage: barrel run <bottle> <file.exe> [args]}
+  [[ -d $DATA/bottles/$1 ]] || cmd_new "$1"
+  b=$(bottle "$1"); shift 2
+  if [[ -f $f ]]; then
+    f=${f:A}; exe=$f
+    [[ ${f:e:l} == lnk ]] && exe=$(lnk_target "$b" "$f")
+    [[ -n $exe ]] && cd "${exe:h}"
+    [[ -n $exe && $(file -b "$exe") == "PE32 "* ]] && bits=32
+  fi
+  wine_env "$b" $bits
+  install_fonts "$b"
+  case ${f:e:l} in
+    msi)     exec "$WINE" msiexec /i "$f" "$@" ;;
+    bat|cmd) exec "$WINE" cmd /c "$f" "$@" ;;
+    lnk)     exec "$WINE" start /wait /unix "$f" "$@" ;;
+    *)       exec "$WINE" "$f" "$@" ;;
+  esac
+}
+
+cmd_set() {
+  local b key=${2:-} val=${3:-}
+  b=$(bottle "${1:-}"); load_conf "$b"
+  case $key in
+    renderer) (( ${RENDERERS[(Ie)$val]} )) || die "Renderers: ${RENDERERS[*]}"; RENDERER=$val ;;
+    engine)   [[ $val == (sikarugir|staging) ]] || die "Engines: sikarugir, staging"; ENGINE=$val ;;
+    hud)      [[ $val == (on|off) ]] || die "hud on|off"; HUD=$val ;;
+    retina)
+      [[ $val == (on|off) ]] || die "retina on|off"
+      RETINA=$val
+      wine_env "$b"
+      local yn=n; [[ $val == on ]] && yn=y
+      "$WINE" reg add 'HKCU\Software\Wine\Mac Driver' /v RetinaMode /d $yn /f >/dev/null 2>&1
+      "$WINESERVER" -w ;;
+    *) die "Usage: barrel set <bottle> renderer|engine|hud|retina <value>" ;;
+  esac
+  save_conf "$b"
+  [[ $ENGINE == staging && $key == renderer && $val != wined3d ]] && info "Note: the staging engine only uses wined3d."
+  info "${b:t}: $key = $val"
+}
+
+cmd_app() {
+  local b exe=${2:?Usage: barrel app <bottle> <file.exe> [Name]} name app
+  b=$(bottle "${1:-}")
+  [[ -f $exe ]] || die "Can't find $exe"
+  name=${3:-${exe:t:r}}
+  app="$HOME/Applications/$name.app"
+  mkdir -p "$app/Contents/MacOS"
+  print -rl -- '#!/bin/zsh' "exec ${(q)SELF} run ${(q)1} ${(q)exe:A} >> ${(q)b}/barrel.log 2>&1" > "$app/Contents/MacOS/launch"
+  chmod +x "$app/Contents/MacOS/launch"
+  cat > "$app/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>launch</string>
+  <key>CFBundleName</key><string>${name//&/&amp;}</string>
+  <key>CFBundleIdentifier</key><string>app.barrel.launcher.${${name//[^A-Za-z0-9]/-}:l}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+EOF
+  info "Launcher: $app (log: ${b:t}/barrel.log)"
+}
+
+cmd_tricks() {
+  local b wt="$DATA/winetricks"
+  b=$(bottle "${1:-}"); shift
+  wine_env "$b"
+  if [[ ! -x $wt ]]; then
+    info "Downloading winetricks…"
+    curl -fsSL -o "$wt" https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks
+    chmod +x "$wt"
+  fi
+  command -v cabextract >/dev/null || info "Tip: many verbs need cabextract (brew install cabextract)."
+  WINE=$(wrapper wine "$WINE") WINESERVER=$(wrapper wineserver "$WINESERVER") W_NO_WIN64_WARNINGS=1 exec "$wt" "$@"
+}
+
+cmd_rm() {
+  local b; b=$(bottle "${1:-}")
+  if [[ ${2:-} != --yes ]]; then
+    read -q "?Delete bottle \"$1\" and everything installed in it? [y/N] " || { print; exit 0 }
+    print
+  fi
+  wine_env "$b"; "$WINESERVER" -k 2>/dev/null || true
+  rm -rf "${b:?}"; info "Deleted."
+}
+
+case ${1:-help} in
+  setup|update) shift; cmd_setup "$@" ;;
+  new)          shift; cmd_new "$@" ;;
+  list|ls)      shift; cmd_list "$@" ;;
+  run)          shift; cmd_run "$@" ;;
+  set)          shift; cmd_set "$@" ;;
+  app)          shift; cmd_app "$@" ;;
+  cfg)          B=$(bottle "${2:-}"); wine_env "$B"; exec "$WINE" winecfg ;;
+  tricks)       shift; cmd_tricks "$@" ;;
+  c)            B=$(bottle "${2:-}"); open "$B/drive_c" ;;
+  kill)         B=$(bottle "${2:-}"); wine_env "$B"; "$WINESERVER" -k ;;
+  rm)           shift; cmd_rm "$@" ;;
+  help|-h|--help) usage ;;
+  *)            usage; exit 1 ;;
+esac
