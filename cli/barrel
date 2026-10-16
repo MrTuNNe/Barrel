@@ -8,6 +8,7 @@ DATA="${BARREL_HOME:-$HOME/Library/Application Support/Barrel}"
 CACHE="$HOME/Library/Caches/Barrel"
 API=https://api.github.com/repos
 RENDERERS=(d3dmetal dxmt dxvk wined3d)
+AUTH=(); [[ -n ${GH_TOKEN:-} ]] && AUTH=(-H "Authorization: Bearer $GH_TOKEN")   # optional, avoids GitHub API rate limits
 
 die()  { print -u2 -r -- "barrel: $*"; exit 1 }
 info() { print -r -- "» $*" }
@@ -43,7 +44,7 @@ EOF
 # assets <repo> <release> <regex>: "name<TAB>url", newest first
 assets() {
   local json
-  json=$(curl -fsSL "$API/$1/releases/$2") ||
+  json=$(curl -fsSL $AUTH "$API/$1/releases/$2") ||
     die "Can't read releases from GitHub ($1). Check your connection or try again in an hour."
   print -r -- "$json" | jq -r --arg re "$3" '.assets | map(select(.name | test($re)))
     | sort_by(.updated_at) | reverse | .[] | "\(.name)\t\(.browser_download_url)"'
@@ -78,7 +79,7 @@ prune() {
 # barrel_release: "name<TAB>url" of the newest Wine that this repo's CI built from CrossOver sources
 barrel_release() {
   local json
-  json=$(curl -fsSL "$API/MrTuNNe/Barrel/releases") || return 1
+  json=$(curl -fsSL $AUTH "$API/MrTuNNe/Barrel/releases") || return 1
   print -r -- "$json" | jq -er '[.[] | select(.tag_name | startswith("wine-cx-")) | .assets[]
     | select(.name | test("^barrel-wine-.*\\.tar\\.xz$"))] | first | select(. != null) | "\(.name)\t\(.browser_download_url)"'
 }

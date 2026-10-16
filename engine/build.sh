@@ -33,7 +33,8 @@ export SDKROOT=$SDK PATH="$BREW/opt/bison/bin:$BREW/opt/flex/bin:${CLANG:h}:$PAT
 
 step "x86_64 libraries (Sikarugir Template, the same ones Barrel uses at runtime)"
 if [[ ! -e $libs/libfreetype.6.dylib ]]; then
-  url=$(curl -fsSL https://api.github.com/repos/Sikarugir-App/Template/releases/tags/v1.0 |
+  auth=(); [[ -n ${GH_TOKEN:-} ]] && auth=(-H "Authorization: Bearer $GH_TOKEN")   # CI shares an IP with rate limits
+  url=$(curl -fsSL $auth https://api.github.com/repos/Sikarugir-App/Template/releases/tags/v1.0 |
     jq -r '.assets | map(select(.name | test("^Template-[0-9.]+\\.tar\\.xz$"))) | sort_by(.updated_at) | last | .browser_download_url')
   rm -rf "$libs"; mkdir -p "$libs"
   curl -fsSL "$url" | tar -xJf - -C "$libs" --strip-components=3 "${${url:t}%.tar.xz}.app/Contents/Frameworks"

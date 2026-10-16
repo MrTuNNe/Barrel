@@ -63,6 +63,7 @@ jobs:
     env:
       VERSION: ${{ needs.check.outputs.version }}
       BARREL_HOME: ${{ github.workspace }}/.barrel-home
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
