@@ -18,7 +18,7 @@ Barrel builds its own Wine and gets everything else from maintained projects:
 `.github/workflows/wine.yml` runs every day. When CodeWeavers publishes a new [CrossOver open-source release](https://www.codeweavers.com/crossover/source), the workflow:
 
 1. builds it on an Apple Silicon runner with `engine/build.sh`, applying the patches in `engine/patches`;
-2. checks that a bottle starts and the fonts work, then runs the graphics tests;
+2. checks that a bottle starts, the fonts work and DXMT draws (runner VMs only have a paravirtual GPU, so D3DMetal and DXVK are tested on a real Mac);
 3. publishes the result as a `wine-cx-<version>` release.
 
 Barrel installs the newest of those releases (`barrel update`, or automatically in the app). The only patch so far adds `WINEDLLPATH_PREPEND`, so D3DMetal, DXMT and DXVK can replace Wine's own Direct3D DLLs. The build steps follow [pedrosimoess/wine-macos27-steam-build](https://github.com/pedrosimoess/wine-macos27-steam-build).

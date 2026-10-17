@@ -91,13 +91,15 @@ jobs:
           cli/barrel run test "$PWD/tests/fonttest.exe"
 
       - name: Graphics tests
-        # Hosted runners are virtual machines, so Metal may be limited; report but don't block the release.
-        continue-on-error: true
+        # Hosted runners are virtual machines with a paravirtual GPU: DXMT works there, while D3DMetal,
+        # DXVK (KosmicKrisp) and OpenGL need real Apple GPU hardware. So only DXMT blocks the release.
         run: |
           L="-static -ld3d9 -ld3d11 -ld3d12 -ldxgi -ld3dcompiler_47 -luuid"
           x86_64-w64-mingw32-g++ -O1 -o tests/gfxtest64.exe tests/gfxtest.cpp $L
           i686-w64-mingw32-g++ -O1 -o tests/gfxtest32.exe tests/gfxtest.cpp $L
-          tests/run.sh cli/barrel
+          tests/run.sh cli/barrel | tee gfx.txt || true
+          grep -qE '^dxmt +gfxtest64.exe +OK d3d11 ' gfx.txt
+          grep -qE '^dxmt +gfxtest32.exe +OK d3d11-32bit ' gfx.txt
 
       - name: Publish
         env:
