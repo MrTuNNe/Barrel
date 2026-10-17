@@ -46,6 +46,14 @@ Click **Install** the first time. It downloads about 250 MB. Then create a bottl
 
 To run something, drop a `.exe` onto the bottle or click **Run…**. Installed programs show up in the list. Right-click a program to add it to `~/Applications`.
 
+### Updates
+
+The app checks GitHub once a day, and from **Barrel › Check for Barrel Updates…**. When a newer `vX.Y.Z` release is out, it offers to download it. To publish a version, push a tag; `.github/workflows/app.yml` builds the app and creates the release:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
 ## The command line
 
 Everything the app does goes through `cli/barrel`, and you can use it directly:

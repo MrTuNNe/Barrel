@@ -39,6 +39,7 @@ final class Store {
     var output = ""            // output of the last long task
     var error: String?
     var notice: String?
+    var appUpdate: AppRelease?  // a newer Barrel release to offer (AppUpdate.swift)
 
     var isInstalled: Bool { engines.contains { $0.hasPrefix("barrel-") || $0.hasPrefix("sikarugir-") } && !runtime.isEmpty }
 

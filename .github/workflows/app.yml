@@ -1,0 +1,27 @@
+# Publishes Barrel.app when a version tag is pushed:  git tag v0.2.0 && git push origin v0.2.0
+# The app checks these releases and tells users when a newer version is out.
+name: App
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip="Barrel-${GITHUB_REF_NAME#v}.zip"
+          ditto -c -k --keepParent build/Barrel.app "$zip"
+          gh release create "$GITHUB_REF_NAME" "$zip" --latest --title "Barrel ${GITHUB_REF_NAME#v}" --generate-notes

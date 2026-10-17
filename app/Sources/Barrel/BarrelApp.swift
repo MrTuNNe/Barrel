@@ -13,12 +13,18 @@ struct BarrelApp: App {
                     await store.refresh()
                     // Check once a day, the first time right after launch.
                     while !Task.isCancelled {
+                        if store.appCheckDue { await store.checkForAppUpdate(manual: false) }
                         if autoUpdate && store.updateCheckDue { await store.checkForUpdates(automatic: true) }
                         try? await Task.sleep(for: .seconds(3600))
                     }
                 }
         }
         .defaultSize(width: 860, height: 560)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Barrel Updates…") { Task { await store.checkForAppUpdate(manual: true) } }
+            }
+        }
 
         Settings {
             SettingsView()
@@ -88,6 +94,15 @@ struct ContentView: View {
         }
         .alert(store.notice ?? "", isPresented: .constant(store.notice != nil)) {
             Button("OK") { store.notice = nil }
+        }
+        .alert("Barrel \(store.appUpdate?.version ?? "") is available", isPresented: .constant(store.appUpdate != nil)) {
+            if let release = store.appUpdate {
+                Button("Download") { store.download(release) }
+                Button("Skip This Version") { store.skip(release) }
+                Button("Later", role: .cancel) { store.appUpdate = nil }
+            }
+        } message: {
+            Text("You have version \(store.currentVersion ?? "?"). Download the new one from GitHub?")
         }
         .onAppear { if selection == nil { selection = store.bottles.first?.name } }
         .onChange(of: store.bottles) { if selection == nil { selection = store.bottles.first?.name } }
