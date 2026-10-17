@@ -1,3 +1,5 @@
+<p align="center"><img src="branding/logo.svg" width="160" alt="Barrel logo"></p>
+
 # Barrel
 
 Run Windows games and programs on your Mac. A maintained replacement for [Whisky](https://github.com/Whisky-App/Whisky).
