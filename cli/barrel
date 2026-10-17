@@ -29,6 +29,7 @@ Barrel — Windows programs and games on your Mac
   barrel set <bottle> engine barrel|sikarugir|staging
   barrel set <bottle> hud on|off     Metal performance HUD
   barrel set <bottle> retina on|off  full Retina resolution
+  barrel set <bottle> native on|off  run NW.js games (RPG Maker MV/MZ…) with NW.js for macOS (default on)
   barrel app <bottle> <file> [Name]  add a launcher to ~/Applications
   barrel cfg <bottle>                winecfg
   barrel tricks <bottle> <verbs..>   winetricks (e.g. vcrun2022 corefonts)
@@ -61,7 +62,7 @@ unpack() {
   curl -fL --progress-bar -o "$f" "$url"
   tmp=$(mktemp -d "${dest:h}/.tmp.XXXXXX")
   info "Extracting…"
-  tar -xJf "$f" -C "$tmp" --strip-components="$strip" "$@" || { rm -rf "${tmp:?}"; die "Extraction failed." }
+  tar -xf "$f" -C "$tmp" --strip-components="$strip" "$@" || { rm -rf "${tmp:?}"; die "Extraction failed." }
   mv "$tmp" "$dest"
   rm -f "$f"
 }
@@ -180,6 +181,37 @@ cmd_check() {
   fi
 }
 
+# ---------------------------------------------------------------- NW.js games
+
+# NW.js games (RPG Maker MV and MZ, and many other JavaScript games) ship a Windows build of NW.js,
+# which rarely starts under Wine. Their game files run fine on the macOS build of NW.js, so Barrel
+# starts them with that instead.
+
+# is_nwjs_game <folder>: the folder holds an NW.js app (package.json or package.nw) and NW.js itself
+is_nwjs_game() {
+  local markers=( $1/(nw.dll|nw_elf.dll|nw.pak|nw_100_percent.pak)(N) )
+  [[ ( -f $1/package.json || -f $1/package.nw ) && $#markers -gt 0 ]]
+}
+
+install_nwjs() {
+  local ver arch dir
+  ver=$(curl -fsSL https://nwjs.io/versions.json | jq -er .stable) || die "Can't reach nwjs.io to download NW.js."
+  arch=x64; [[ $(uname -m) == arm64 ]] && arch=arm64
+  dir="$DATA/nwjs/$ver"
+  [[ -d $dir ]] || unpack "https://dl.nwjs.io/$ver/nwjs-$ver-osx-$arch.zip" "$dir" 1 "nwjs-$ver-osx-$arch/nwjs.app"
+  prune "$DATA/nwjs" 'v*' "$dir"
+  info "NW.js $ver"
+}
+
+# run_nwjs <game folder> [args]: start an NW.js game with the native macOS NW.js
+run_nwjs() {
+  local nw app=$1; shift
+  nw=$(newest "$DATA/nwjs" 'v*') || { info "First NW.js game: downloading NW.js for macOS (about 175 MB)…"; install_nwjs; nw=$(newest "$DATA/nwjs" 'v*') }
+  [[ -f $app/package.json ]] || app=$app/package.nw
+  info "${${app%/package.nw}:t}: an NW.js game (e.g. RPG Maker MV/MZ), running it with NW.js ${nw:t} for macOS"
+  exec "$nw/nwjs.app/Contents/MacOS/nwjs" "$app" "$@"
+}
+
 cmd_setup() {
   [[ $(uname -m) == arm64 ]] && ! arch -x86_64 /usr/bin/true 2>/dev/null &&
     die "Rosetta 2 is missing. Install it with: softwareupdate --install-rosetta"
@@ -192,6 +224,7 @@ cmd_setup() {
     install_sikarugir
   fi
   install_runtime
+  [[ -n $(newest "$DATA/nwjs" 'v*') ]] && install_nwjs
   if [[ ${1:-} == --staging || -n $(newest "$DATA/engines" 'staging-*') ]]; then install_staging; fi
   info "Done. Create a bottle: barrel new games"
 }
@@ -208,12 +241,12 @@ bottle() {
 default_engine() { [[ -n $(newest "$DATA/engines" 'barrel-*') ]] && print barrel || print sikarugir }
 
 load_conf() {
-  ENGINE=sikarugir RENDERER=d3dmetal HUD=off RETINA=off
+  ENGINE=sikarugir RENDERER=d3dmetal HUD=off RETINA=off NATIVE=on
   [[ -f $1/barrel.conf ]] && source "$1/barrel.conf"
   return 0
 }
 
-save_conf() { print -rl -- "ENGINE=$ENGINE" "RENDERER=$RENDERER" "HUD=$HUD" "RETINA=$RETINA" > "$1/barrel.conf" }
+save_conf() { print -rl -- "ENGINE=$ENGINE" "RENDERER=$RENDERER" "HUD=$HUD" "RETINA=$RETINA" "NATIVE=$NATIVE" > "$1/barrel.conf" }
 
 # wine_env <bottle> [32]: sets WINE, WINESERVER and the environment for the engine + renderer
 wine_env() {
@@ -314,7 +347,7 @@ cmd_new() {
   b="$DATA/bottles/$name"
   [[ -e $b ]] && die "Bottle \"$name\" already exists."
   mkdir -p "$b"
-  ENGINE=${2:-$(default_engine)} RENDERER=d3dmetal HUD=off RETINA=off
+  ENGINE=${2:-$(default_engine)} RENDERER=d3dmetal HUD=off RETINA=off NATIVE=on
   [[ $ENGINE == (barrel|sikarugir|staging) ]] || { rm -rf "${b:?}"; die "Unknown engine: $ENGINE" }
   save_conf "$b"
   wine_env "$b"
@@ -332,7 +365,8 @@ cmd_list() {
     for b in $DATA/bottles/*(N/); do
       load_conf "$b"
       rows+=( "$(jq -nc --arg name "${b:t}" --arg path "$b" --arg engine "$ENGINE" --arg renderer "$RENDERER" \
-        --arg hud "$HUD" --arg retina "$RETINA" '$ARGS.named | .hud = (.hud == "on") | .retina = (.retina == "on")')" )
+        --arg hud "$HUD" --arg retina "$RETINA" --arg native "$NATIVE" \
+        '$ARGS.named | .hud = (.hud == "on") | .retina = (.retina == "on") | .native = (.native == "on")')" )
     done
     jq -nc --args '{engines: $ARGS.positional}' -- "${engines[@]}" |
       jq -c --arg runtime "${rt[1]:-}" --argjson bottles "[${(j:,:)rows}]" '. + {runtime: $runtime, bottles: $bottles}'
@@ -412,7 +446,10 @@ cmd_run() {
   fi
   [[ -n $exe && ! -f $exe ]] && die "The program this shortcut opens is gone. It may have been uninstalled."
   load_conf "$b"; RENDERER=${BARREL_RENDERER:-$RENDERER} HUD=${BARREL_HUD:-$HUD}
+  local nwjs=0
+  [[ $NATIVE == on && ${exe:e:l} == exe ]] && is_nwjs_game "${exe:h}" && { nwjs=1; RENDERER=nwjs }
   [[ -f $f ]] && record_run "$b" "$f"
+  (( nwjs )) && run_nwjs "${exe:h}" "$@"
   wine_env "$b" $bits
   install_fonts "$b"
   case ${f:e:l} in
@@ -430,6 +467,7 @@ cmd_set() {
     renderer) (( ${RENDERERS[(Ie)$val]} )) || die "Renderers: ${RENDERERS[*]}"; RENDERER=$val ;;
     engine)   [[ $val == (barrel|sikarugir|staging) ]] || die "Engines: barrel, sikarugir, staging"; ENGINE=$val ;;
     hud)      [[ $val == (on|off) ]] || die "hud on|off"; HUD=$val ;;
+    native)   [[ $val == (on|off) ]] || die "native on|off"; NATIVE=$val ;;
     retina)
       [[ $val == (on|off) ]] || die "retina on|off"
       RETINA=$val
@@ -437,7 +475,7 @@ cmd_set() {
       local yn=n; [[ $val == on ]] && yn=y
       "$WINE" reg add 'HKCU\Software\Wine\Mac Driver' /v RetinaMode /d $yn /f >/dev/null 2>&1
       "$WINESERVER" -w ;;
-    *) die "Usage: barrel set <bottle> renderer|engine|hud|retina <value>" ;;
+    *) die "Usage: barrel set <bottle> renderer|engine|hud|retina|native <value>" ;;
   esac
   save_conf "$b"
   [[ $ENGINE == staging && $key == renderer && $val != wined3d ]] && info "Note: the staging engine only uses wined3d."

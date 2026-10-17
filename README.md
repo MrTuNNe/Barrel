@@ -81,6 +81,12 @@ Run `cli/barrel` with no arguments for the full list.
 
 DirectX 9 always works. With `d3dmetal` and `dxmt` it goes through wined3d.
 
+## RPG Maker MV/MZ and other NW.js games
+
+Games made with NW.js (RPG Maker MV and MZ, and many other JavaScript games) ship a Windows build of NW.js, which rarely starts under Wine. Their game files run fine on the macOS build of NW.js. When you run such a game's `.exe`, Barrel spots it (`package.json` or `package.nw` next to `nw.dll`, `nw.pak`…) and starts it with NW.js for macOS. NW.js is downloaded the first time, about 175 MB.
+
+Saves stay in the game's folder, as on Windows. To run one through Wine anyway, turn off **Run NW.js games natively** for the bottle (`barrel set <bottle> native off`). Games packed into a single `.exe` (Enigma Virtual Box) can't be spotted, so they still go through Wine.
+
 ## Fonts
 
 Many engines, Unity among them, read font files straight from `C:\windows\Fonts` instead of asking Windows. If the files aren't there, the text is invisible. Like Proton, Barrel puts fonts in every bottle. It links the macOS fonts there, adds Windows file names (`arial.ttf`, `msgothic.ttc`, `simsun.ttc`, `malgun.ttf`…) and maps Windows font names to macOS ones (MS Gothic and Meiryo to Hiragino Sans, SimSun to Songti, Malgun Gothic to Apple SD Gothic Neo, Segoe UI to Helvetica Neue).

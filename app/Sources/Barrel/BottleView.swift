@@ -61,6 +61,9 @@ struct BottleView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Performance HUD", isOn: binding(\.hud, "hud") { $0 ? "on" : "off" })
                 Toggle("Retina resolution", isOn: binding(\.retina, "retina") { $0 ? "on" : "off" })
+                Toggle("Run NW.js games natively", isOn: binding(\.native, "native") { $0 ? "on" : "off" })
+                Text("RPG Maker MV/MZ and other JavaScript (NW.js) games rarely start under Wine. Barrel runs them with NW.js for macOS instead.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Bottle") {
@@ -155,7 +158,8 @@ private struct RecentRow: View {
     let remove: () -> Void
 
     private var details: String {
-        let renderer = renderers.first { $0.id == run.renderer }?.name ?? run.renderer
+        let renderer = run.renderer == "nwjs" ? "NW.js for macOS"
+            : renderers.first { $0.id == run.renderer }?.name ?? run.renderer
         let when = Date(timeIntervalSince1970: run.time).formatted(.relative(presentation: .named))
         return [renderer, run.hud == "on" ? "HUD" : nil, when].compactMap { $0 }.joined(separator: " · ")
     }

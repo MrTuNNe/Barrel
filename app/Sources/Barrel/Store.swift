@@ -8,6 +8,7 @@ struct Bottle: Codable, Identifiable, Hashable {
     var renderer: String
     var hud: Bool
     var retina: Bool
+    var native: Bool
     var id: String { name }
     var driveC: URL { URL(fileURLWithPath: path).appendingPathComponent("drive_c") }
     var logURL: URL { URL(fileURLWithPath: path).appendingPathComponent("barrel.log") }
