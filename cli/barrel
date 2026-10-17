@@ -23,6 +23,8 @@ Barrel — Windows programs and games on your Mac
   barrel new <bottle> [engine]       create a bottle (a separate Windows install)
   barrel list [--json]               bottles and installed versions
   barrel run <bottle> <file> [args]  run a .exe / .msi / .bat / .lnk (creates the bottle if needed)
+  barrel recent <bottle> [--json]    programs launched lately, with their settings ("!" = file is gone)
+  barrel recent <bottle> --remove <file>
   barrel set <bottle> renderer d3dmetal|dxmt|dxvk|wined3d
   barrel set <bottle> engine barrel|sikarugir|staging
   barrel set <bottle> hud on|off     Metal performance HUD
@@ -216,6 +218,8 @@ save_conf() { print -rl -- "ENGINE=$ENGINE" "RENDERER=$RENDERER" "HUD=$HUD" "RET
 # wine_env <bottle> [32]: sets WINE, WINESERVER and the environment for the engine + renderer
 wine_env() {
   load_conf "$1"
+  # Per-launch overrides, used to replay a program with the settings it last ran with.
+  RENDERER=${BARREL_RENDERER:-$RENDERER} HUD=${BARREL_HUD:-$HUD}
   # D3DMetal is 64-bit only; 32-bit programs get DXMT.
   [[ $RENDERER == d3dmetal && ${2:-} == 32 ]] && RENDERER=dxmt
   local e rt fw rd
@@ -346,9 +350,51 @@ cmd_list() {
 # lnk_target <bottle> <file.lnk>: the macOS path of the .exe a Windows shortcut points to, if found
 lnk_target() {
   local t
-  t=$(strings -n 6 "$2" | grep -m1 -iE '^[a-z]:\\.*\.exe$') || return 0
-  t="$1/drive_${${t[1]}:l}/${${t:3}//\\//}"
-  [[ -f $t ]] && print -r -- "$t"
+  t=$(lnk_path "$1" "$2") && [[ -f $t ]] && print -r -- "$t"
+  return 0
+}
+
+# lnk_path <bottle> <file.lnk>: where the shortcut points, whether or not that file still exists
+lnk_path() {
+  local t
+  t=$(strings -n 6 "$2" | grep -m1 -iE '^[a-z]:\\.*\.exe$') || return 1
+  print -r -- "$1/drive_${${t[1]}:l}/${${t:3}//\\//}"
+}
+
+# record_run <bottle> <file>: remember a launch and its settings (newest first, 12 at most).
+# Installers and uninstallers aren't worth replaying, so they're left out.
+record_run() {
+  [[ ${2:e:l} == msi || ${2:t:l} == *(setup|install|unins)* ]] && return 0
+  local list="$1/recent.json" tmp
+  tmp=$(mktemp "$1/.recent.XXXXXX")
+  jq -c --arg path "$2" --arg renderer "$RENDERER" --arg hud "$HUD" --argjson time "$(date +%s)" \
+    '[{path: $path, renderer: $renderer, hud: $hud, time: $time}] + map(select(.path != $path)) | .[:12]' \
+    <(cat "$list" 2>/dev/null || print '[]') > "$tmp" && mv "$tmp" "$list" || rm -f "$tmp"
+}
+
+# cmd_recent <bottle> [--json | --remove <file>]: recently launched programs; "exists" is false when
+# the file (or the program a shortcut points to) is gone, e.g. after an uninstall or a moved folder
+cmd_recent() {
+  local b list file target rows=()
+  b=$(bottle "${1:-}"); list="$b/recent.json"
+  if [[ ${2:-} == --remove ]]; then
+    [[ -f $list ]] && jq -c --arg path "${3:?missing file}" 'map(select(.path != $path))' "$list" > "$list.tmp" && mv "$list.tmp" "$list"
+    return
+  fi
+  [[ -f $list ]] || { [[ ${2:-} == --json ]] && print '[]'; return 0 }
+  for file in ${(f)"$(jq -r '.[].path' "$list")"}; do
+    if [[ ${file:e:l} == lnk && -f $file ]]; then
+      target=$(lnk_path "$b" "$file") || target=$file
+    else
+      target=$file
+    fi
+    [[ -e $target ]] && rows+=(true) || rows+=(false)
+  done
+  if [[ ${2:-} == --json ]]; then
+    jq -c --args 'to_entries | map(.value + {exists: ($ARGS.positional[.key] == "true")})' "${rows[@]}" < "$list"
+  else
+    jq -r --args 'to_entries[] | "\(if $ARGS.positional[.key] == "true" then "  " else "! " end)\(.value.path)  (\(.value.renderer), HUD \(.value.hud))"' "${rows[@]}" < "$list"
+  fi
 }
 
 cmd_run() {
@@ -356,12 +402,17 @@ cmd_run() {
   f=${2:?Usage: barrel run <bottle> <file.exe> [args]}
   [[ -d $DATA/bottles/$1 ]] || cmd_new "$1"
   b=$(bottle "$1"); shift 2
+  # A macOS path that's gone (uninstalled, moved, an unplugged drive): say so instead of letting Wine fail.
+  [[ $f == /* && ! -e $f ]] && die "Can't find $f. It may have been moved or uninstalled."
   if [[ -f $f ]]; then
     f=${f:A}; exe=$f
-    [[ ${f:e:l} == lnk ]] && exe=$(lnk_target "$b" "$f")
+    [[ ${f:e:l} == lnk ]] && { exe=$(lnk_path "$b" "$f") || exe= }
     [[ -n $exe ]] && cd "${exe:h}"
     [[ -n $exe && $(file -b "$exe") == "PE32 "* ]] && bits=32
   fi
+  [[ -n $exe && ! -f $exe ]] && die "The program this shortcut opens is gone. It may have been uninstalled."
+  load_conf "$b"; RENDERER=${BARREL_RENDERER:-$RENDERER} HUD=${BARREL_HUD:-$HUD}
+  [[ -f $f ]] && record_run "$b" "$f"
   wine_env "$b" $bits
   install_fonts "$b"
   case ${f:e:l} in
@@ -444,6 +495,7 @@ case ${1:-help} in
   new)          shift; cmd_new "$@" ;;
   list|ls)      shift; cmd_list "$@" ;;
   run)          shift; cmd_run "$@" ;;
+  recent)       shift; cmd_recent "$@" ;;
   set)          shift; cmd_set "$@" ;;
   app)          shift; cmd_app "$@" ;;
   cfg)          B=$(bottle "${2:-}"); wine_env "$B"; exec "$WINE" winecfg ;;

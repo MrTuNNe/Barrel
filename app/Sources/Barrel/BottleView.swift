@@ -14,11 +14,18 @@ struct BottleView: View {
     @Environment(Store.self) private var store
     let bottle: Bottle
     @State private var programs: [Program] = []
+    @State private var recents: [RecentRun] = []
     @State private var confirmDelete = false
     @State private var dropTargeted = false
 
     var body: some View {
         Form {
+            if !recents.isEmpty {
+                Section("Recent") {
+                    ForEach(recents) { run in RecentRow(run: run, play: { replay(run) }, remove: { forget(run) }) }
+                }
+            }
+
             Section {
                 if programs.isEmpty {
                     Text("Nothing installed yet. Run an installer, or drop a .exe here.")
@@ -28,7 +35,7 @@ struct BottleView: View {
                     HStack {
                         Label(program.name, systemImage: "app")
                         Spacer()
-                        Button("Run") { store.run(bottle, program.url) }
+                        Button("Run") { store.run(bottle, program.url); reloadRecentSoon() }
                     }
                     .contextMenu {
                         Button("Add to Applications") {
@@ -81,15 +88,20 @@ struct BottleView: View {
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let url else { return }
-                    Task { @MainActor in store.run(bottle, url) }
+                    Task { @MainActor in store.run(bottle, url); reloadRecentSoon() }
                 }
             }
             return true
         }
-        .task(id: bottle) { programs = store.programs(bottle) }
-        // Installers add Start Menu entries while they run; check again when the app comes back to front.
+        .task(id: bottle) {
+            programs = store.programs(bottle)
+            recents = await store.recent(bottle)
+        }
+        // Installers add Start Menu entries and files can disappear while Barrel is in the background;
+        // check again when the app comes back to front.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             programs = store.programs(bottle)
+            Task { recents = await store.recent(bottle) }
         }
         .confirmationDialog("Delete \(bottle.name)?", isPresented: $confirmDelete) {
             Button("Delete Bottle", role: .destructive) {
@@ -104,7 +116,28 @@ struct BottleView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = runnable
         panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-        if panel.runModal() == .OK, let url = panel.url { store.run(bottle, url) }
+        if panel.runModal() == .OK, let url = panel.url { store.run(bottle, url); reloadRecentSoon() }
+    }
+
+    private func replay(_ run: RecentRun) {
+        Task {
+            if await store.replay(bottle, run) { reloadRecentSoon() } else { recents = await store.recent(bottle) }
+        }
+    }
+
+    private func forget(_ run: RecentRun) {
+        Task {
+            await store.forget(bottle, run)
+            recents = await store.recent(bottle)
+        }
+    }
+
+    /// The CLI records a launch just before Wine starts; pick it up a moment later.
+    private func reloadRecentSoon() {
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            recents = await store.recent(bottle)
+        }
     }
 
     /// A binding that shows the bottle's value and saves changes through the CLI.
@@ -113,5 +146,44 @@ struct BottleView: View {
             get: { bottle[keyPath: key] },
             set: { new in Task { await store.set(bottle, name, value(new)) } }
         )
+    }
+}
+
+private struct RecentRow: View {
+    let run: RecentRun
+    let play: () -> Void
+    let remove: () -> Void
+
+    private var details: String {
+        let renderer = renderers.first { $0.id == run.renderer }?.name ?? run.renderer
+        let when = Date(timeIntervalSince1970: run.time).formatted(.relative(presentation: .named))
+        return [renderer, run.hud == "on" ? "HUD" : nil, when].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack {
+            Image(systemName: run.exists ? "clock" : "exclamationmark.triangle.fill")
+                .foregroundStyle(run.exists ? Color.secondary : Color.orange)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(run.name).foregroundStyle(run.exists ? .primary : .secondary)
+                Text(run.exists ? details : "Not found. It may have been moved or uninstalled.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if run.exists {
+                Button(action: play) { Image(systemName: "play.fill") }
+                    .help("Run again with the same settings")
+            } else {
+                Button("Remove", action: remove)
+            }
+        }
+        .contextMenu {
+            if run.exists {
+                Button("Run Again", action: play)
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([run.url]) }
+            }
+            Button("Remove from Recent", action: remove)
+        }
     }
 }

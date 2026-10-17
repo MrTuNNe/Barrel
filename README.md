@@ -46,6 +46,8 @@ Click **Install** the first time. It downloads about 250 MB. Then create a bottl
 
 To run something, drop a `.exe` onto the bottle or click **Run…**. Installed programs show up in the list. Right-click a program to add it to `~/Applications`.
 
+**Recent** lists what you launched lately with the renderer and HUD setting it ran with. ▶ runs it again with those settings. Barrel checks the file before every launch. If it's gone, or a shortcut's program was uninstalled, the entry says so and offers **Remove**. If you reinstall the program or plug the drive back in, it works again.
+
 ### Updates
 
 The app checks GitHub once a day, and from **Barrel › Check for Barrel Updates…**. When a newer `vX.Y.Z` release is out, it offers to download it. To publish a version, push a tag; `.github/workflows/app.yml` builds the app and creates the release:

@@ -13,6 +13,18 @@ struct Bottle: Codable, Identifiable, Hashable {
     var logURL: URL { URL(fileURLWithPath: path).appendingPathComponent("barrel.log") }
 }
 
+/// A program launched lately and the settings it ran with (from `barrel recent`).
+struct RecentRun: Codable, Identifiable, Hashable {
+    let path: String
+    let renderer: String
+    let hud: String
+    let time: Double
+    let exists: Bool    // false once the file, or the program a shortcut opens, is gone
+    var id: String { path }
+    var url: URL { URL(fileURLWithPath: path) }
+    var name: String { url.deletingPathExtension().lastPathComponent }
+}
+
 struct Program: Identifiable, Hashable {
     let url: URL
     var id: URL { url }
@@ -122,10 +134,11 @@ final class Store {
     }
 
     /// Starts a program in the background; its output goes to the bottle's log.
-    func launch(_ bottle: Bottle, _ args: [String]) {
+    func launch(_ bottle: Bottle, _ args: [String], env: [String: String] = [:]) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = [cli] + args
+        p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
         FileManager.default.createFile(atPath: bottle.logURL.path, contents: nil)
         if let log = try? FileHandle(forWritingTo: bottle.logURL) {
             log.seekToEndOfFile()
@@ -136,6 +149,28 @@ final class Store {
     }
 
     func run(_ bottle: Bottle, _ file: URL) { launch(bottle, ["run", bottle.name, file.path]) }
+
+    func recent(_ bottle: Bottle) async -> [RecentRun] {
+        let (status, text) = await exec(["recent", bottle.name, "--json"], stream: false)
+        guard status == 0, let data = text.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([RecentRun].self, from: data)) ?? []
+    }
+
+    /// Runs a program again with the renderer and HUD it last ran with. It's checked once more
+    /// right before launching (for a shortcut, the program it opens too), since it can disappear
+    /// while the app is open.
+    func replay(_ bottle: Bottle, _ run: RecentRun) async -> Bool {
+        guard await recent(bottle).first(where: { $0.path == run.path })?.exists == true else {
+            error = "\(run.name) can't be found. It may have been moved or uninstalled."
+            return false
+        }
+        launch(bottle, ["run", bottle.name, run.path], env: ["BARREL_RENDERER": run.renderer, "BARREL_HUD": run.hud])
+        return true
+    }
+
+    func forget(_ bottle: Bottle, _ run: RecentRun) async {
+        _ = await exec(["recent", bottle.name, "--remove", run.path], stream: false)
+    }
 
     /// Start Menu shortcuts installed in the bottle.
     func programs(_ bottle: Bottle) -> [Program] {
