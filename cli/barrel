@@ -29,7 +29,7 @@ Barrel — Windows programs and games on your Mac
   barrel set <bottle> engine barrel|sikarugir|staging
   barrel set <bottle> hud on|off     Metal performance HUD
   barrel set <bottle> retina on|off  full Retina resolution
-  barrel set <bottle> native on|off  run NW.js games (RPG Maker MV/MZ…) with NW.js for macOS (default on)
+  barrel set <bottle> native on|off  run NW.js (RPG Maker MV/MZ…) and Electron games natively (default on)
   barrel app <bottle> <file> [Name]  add a launcher to ~/Applications
   barrel cfg <bottle>                winecfg
   barrel tricks <bottle> <verbs..>   winetricks (e.g. vcrun2022 corefonts)
@@ -210,6 +210,35 @@ run_nwjs() {
   [[ -f $app/package.json ]] || app=$app/package.nw
   info "${${app%/package.nw}:t}: an NW.js game (e.g. RPG Maker MV/MZ), running it with NW.js ${nw:t} for macOS"
   exec "$nw/nwjs.app/Contents/MacOS/nwjs" "$app" "$@"
+}
+
+# Electron games work the same way: a Windows Electron runs their resources/app, which also runs
+# on the macOS Electron. They pin an Electron version, so Barrel fetches that exact one.
+
+# electron_app <folder>: prints the game's app (resources/app or app.asar) if the folder is an Electron build
+electron_app() {
+  [[ -f $1/resources.pak && -f $1/version ]] || return 1
+  local app
+  for app in $1/resources/app.asar $1/resources/app; do
+    [[ -e $app ]] && { print -r -- "$app"; return 0 }
+  done
+  return 1
+}
+
+# run_electron <game folder> [args]: start an Electron game with the macOS Electron of the same version
+run_electron() {
+  local dir=$1 app ver arch electron; shift
+  app=$(electron_app "$dir")
+  ver=$(tr -d ' \n\r' < "$dir/version")
+  [[ $ver =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || die "Can't tell which Electron version ${dir:t} needs (version file: \"$ver\")."
+  arch=x64; [[ $(uname -m) == arm64 ]] && arch=arm64
+  electron="$DATA/electron/$ver"
+  if [[ ! -d $electron ]]; then
+    info "First game with Electron $ver: downloading it for macOS (about 100 MB)…"
+    unpack "https://github.com/electron/electron/releases/download/v$ver/electron-v$ver-darwin-$arch.zip" "$electron" 0 Electron.app
+  fi
+  info "${dir:t}: an Electron game, running it with Electron $ver for macOS"
+  exec "$electron/Electron.app/Contents/MacOS/Electron" "$app" "$@"
 }
 
 cmd_setup() {
@@ -446,10 +475,17 @@ cmd_run() {
   fi
   [[ -n $exe && ! -f $exe ]] && die "The program this shortcut opens is gone. It may have been uninstalled."
   load_conf "$b"; RENDERER=${BARREL_RENDERER:-$RENDERER} HUD=${BARREL_HUD:-$HUD}
-  local nwjs=0
-  [[ $NATIVE == on && ${exe:e:l} == exe ]] && is_nwjs_game "${exe:h}" && { nwjs=1; RENDERER=nwjs }
+  # JavaScript games run natively: NW.js (RPG Maker MV/MZ…) and Electron builds.
+  local native=
+  if [[ $NATIVE == on && ${exe:e:l} == exe ]]; then
+    if is_nwjs_game "${exe:h}"; then native=nwjs
+    elif electron_app "${exe:h}" >/dev/null; then native=electron
+    fi
+  fi
+  [[ -n $native ]] && RENDERER=$native
   [[ -f $f ]] && record_run "$b" "$f"
-  (( nwjs )) && run_nwjs "${exe:h}" "$@"
+  [[ $native == nwjs ]] && run_nwjs "${exe:h}" "$@"
+  [[ $native == electron ]] && run_electron "${exe:h}" "$@"
   wine_env "$b" $bits
   install_fonts "$b"
   case ${f:e:l} in

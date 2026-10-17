@@ -81,11 +81,13 @@ Run `cli/barrel` with no arguments for the full list.
 
 DirectX 9 always works. With `d3dmetal` and `dxmt` it goes through wined3d.
 
-## RPG Maker MV/MZ and other NW.js games
+## RPG Maker MV/MZ, NW.js and Electron games
 
 Games made with NW.js (RPG Maker MV and MZ, and many other JavaScript games) ship a Windows build of NW.js, which rarely starts under Wine. Their game files run fine on the macOS build of NW.js. When you run such a game's `.exe`, Barrel spots it (`package.json` or `package.nw` next to `nw.dll`, `nw.pak`…) and starts it with NW.js for macOS. NW.js is downloaded the first time, about 175 MB.
 
-Saves stay in the game's folder, as on Windows. To run one through Wine anyway, turn off **Run NW.js games natively** for the bottle (`barrel set <bottle> native off`). Games packed into a single `.exe` (Enigma Virtual Box) can't be spotted, so they still go through Wine.
+Electron games work the same way. They have a `resources/app` (or `app.asar`) next to a `version` file, and Barrel runs them with the macOS build of that exact Electron version, downloaded once per version (about 100 MB). Games with Windows-only native modules (`.node` files) may still need Wine.
+
+NW.js games keep their saves in the game's folder, as on Windows. To run a game through Wine anyway, turn off **Run JavaScript games natively** for the bottle (`barrel set <bottle> native off`). Games packed into a single `.exe` (Enigma Virtual Box) can't be spotted, so they still go through Wine.
 
 ## Fonts
 
