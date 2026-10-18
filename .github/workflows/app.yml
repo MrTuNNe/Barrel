@@ -1,10 +1,18 @@
 # Publishes Barrel.app when a version tag is pushed:  git tag v0.2.0 && git push origin v0.2.0
+# Assets: Barrel.dmg (drag to Applications; the name stays the same, so
+# https://github.com/MrTuNNe/Barrel/releases/latest/download/Barrel.dmg is always the newest) and Barrel-<version>.zip.
 # The app checks these releases and tells users when a newer version is out.
+# "Run workflow" with a tag rebuilds the assets of an existing release.
 name: App
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to rebuild (e.g. v0.4.0)
+        required: true
 
 permissions:
   contents: write
@@ -12,16 +20,32 @@ permissions:
 jobs:
   release:
     runs-on: macos-15
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Build
-        run: VERSION="${GITHUB_REF_NAME#v}" ./build.sh
+        run: VERSION="${TAG#v}" ./build.sh
+
+      - name: Package
+        run: |
+          v="${TAG#v}"
+          ditto -c -k --keepParent build/Barrel.app "Barrel-$v.zip"
+          mkdir dmg
+          cp -R build/Barrel.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Barrel $v" -srcfolder dmg -ov -format UDZO Barrel.dmg
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          zip="Barrel-${GITHUB_REF_NAME#v}.zip"
-          ditto -c -k --keepParent build/Barrel.app "$zip"
-          gh release create "$GITHUB_REF_NAME" "$zip" --latest --title "Barrel ${GITHUB_REF_NAME#v}" --generate-notes
+          v="${TAG#v}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" Barrel.dmg "Barrel-$v.zip" --clobber
+          else
+            gh release create "$TAG" Barrel.dmg "Barrel-$v.zip" --latest --title "Barrel $v" --generate-notes
+          fi

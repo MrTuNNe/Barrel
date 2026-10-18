@@ -15,6 +15,16 @@ Barrel builds its own Wine and gets everything else from maintained projects:
 | D3DMetal, DXMT, DXVK, KosmicKrisp Vulkan, GStreamer | [Sikarugir-App/Template](https://github.com/Sikarugir-App/Template) | DirectX on Metal, video, fonts |
 | Wine Staging, latest (optional) | [Gcenx/macOS_Wine_builds](https://github.com/Gcenx/macOS_Wine_builds) | plain upstream Wine |
 
+## Download
+
+**[Download Barrel.dmg](https://github.com/MrTuNNe/Barrel/releases/latest/download/Barrel.dmg)** (newest version; [all releases](https://github.com/MrTuNNe/Barrel/releases)).
+
+1. Open the DMG and drag Barrel into Applications.
+2. The first time, right-click Barrel › **Open** › **Open**. Barrel isn't signed with an Apple Developer ID, so macOS asks once. Alternatively, use **System Settings › Privacy & Security › Open Anyway**.
+3. Click **Install**. Barrel downloads Wine and the graphics layers, about 250 MB.
+
+Barrel tells you when a new version is out.
+
 ## Barrel Wine
 
 `.github/workflows/wine.yml` runs every day. When CodeWeavers publishes a new [CrossOver open-source release](https://www.codeweavers.com/crossover/source), the workflow:
@@ -38,6 +48,8 @@ BARREL_ENGINE_TARBALL=dist/barrel-wine-26.3.0.tar.xz cli/barrel setup
 - Rosetta 2: `softwareupdate --install-rosetta`
 
 ## The app
+
+To build it yourself instead:
 
 ```bash
 ./build.sh
