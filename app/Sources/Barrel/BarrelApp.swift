@@ -1,16 +1,30 @@
 import SwiftUI
+import UniformTypeIdentifiers
+
+/// Receives the .exe/.msi/.bat/.lnk files opened with Barrel from Finder.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { @MainActor in
+            Store.shared.openedFiles += urls
+            Store.shared.runOpenedFiles()
+        }
+    }
+}
 
 @main
 struct BarrelApp: App {
-    @State private var store = Store()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @State private var store = Store.shared
     @AppStorage(Store.autoUpdateKey) private var autoUpdate = true
 
     var body: some Scene {
-        WindowGroup {
+        // A single window: opening files from Finder shouldn't open another one each time.
+        Window("Barrel", id: "main") {
             ContentView()
                 .environment(store)
                 .task {
                     await store.refresh()
+                    store.runOpenedFiles()
                     // Check once a day, the first time right after launch.
                     while !Task.isCancelled {
                         if store.appCheckDue { await store.checkForAppUpdate(manual: false) }
@@ -34,15 +48,35 @@ struct BarrelApp: App {
 
 struct SettingsView: View {
     @AppStorage(Store.autoUpdateKey) private var autoUpdate = true
+    @State private var defaultMessage = ""
 
     var body: some View {
         Form {
             Toggle("Update Wine automatically", isOn: $autoUpdate)
             Text("Barrel checks once a day and installs new versions of Wine and the graphics libraries when no Windows program is running.")
                 .font(.caption).foregroundStyle(.secondary)
+            LabeledContent("Windows programs") {
+                Button("Open .exe, .msi, .bat and .lnk with Barrel") { makeDefault() }
+            }
+            Text(defaultMessage.isEmpty ? "Double-clicking a Windows program in Finder will then run it in Barrel." : defaultMessage)
+                .font(.caption).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
         .frame(width: 420)
+    }
+
+    private func makeDefault() {
+        let types = ["com.microsoft.windows-executable", "com.microsoft.msi-installer", "com.microsoft.bat",
+                     "com.microsoft.windows-shortcut", "com.microsoft.windows-cmd"].compactMap { UTType($0) }
+        Task {
+            var failed = 0
+            for type in types {
+                do { try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpen: type) }
+                catch { failed += 1 }
+            }
+            defaultMessage = failed == 0 ? "Done. Windows programs now open with Barrel."
+                : "macOS didn't allow changing \(failed) of them. Use Finder: Get Info › Open with › Barrel › Change All."
+        }
     }
 }
 
@@ -87,6 +121,12 @@ struct ContentView: View {
         .sheet(isPresented: $creating) {
             NewBottleSheet { name in selection = name }
         }
+        .sheet(isPresented: .constant(store.isInstalled && store.busy == nil && store.bottles.count != 1
+                                      && !store.openedFiles.isEmpty)) {
+            OpenFileSheet { name in selection = name }
+        }
+        .onChange(of: store.isInstalled) { store.runOpenedFiles() }
+        .onChange(of: store.busy) { store.runOpenedFiles() }
         .alert("Something went wrong", isPresented: .constant(store.error != nil)) {
             Button("OK") { store.error = nil }
         } message: {
@@ -175,6 +215,66 @@ struct NewBottleSheet: View {
                 }
                 .disabled(!valid)
             }
+        }
+    }
+}
+
+/// Asks which bottle a file opened from Finder should run in (the last used one is preselected),
+/// or creates the first bottle when there are none.
+struct OpenFileSheet: View {
+    @Environment(Store.self) private var store
+    @State private var bottleName = ""
+    @State private var newName = "Games"
+    let ran: (String) -> Void
+
+    private var file: URL? { store.openedFiles.first }
+    private var newNameValid: Bool {
+        let n = newName.trimmingCharacters(in: .whitespaces)
+        return !n.isEmpty && !n.contains("/") && !n.hasPrefix(".")
+    }
+
+    var body: some View {
+        Form {
+            Section("Run \u{201C}\(file?.lastPathComponent ?? "")\u{201D} in") {
+                if store.bottles.isEmpty {
+                    TextField("New bottle", text: $newName)
+                } else {
+                    Picker("Bottle", selection: $bottleName) {
+                        ForEach(store.bottles) { Text($0.name).tag($0.name) }
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 380)
+        .onAppear { bottleName = store.defaultBottle?.name ?? "" }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { store.openedFiles.removeFirst() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Run") { runIt() }
+                    .disabled(store.bottles.isEmpty ? !newNameValid : bottleName.isEmpty)
+            }
+        }
+    }
+
+    private func runIt() {
+        guard let file else { return }
+        store.openedFiles.removeFirst()
+        if let bottle = store.bottles.first(where: { $0.name == bottleName }) {
+            store.run(bottle, file)
+            ran(bottle.name)
+            return
+        }
+        let name = newName.trimmingCharacters(in: .whitespaces)
+        Task {
+            guard await store.task("Creating bottle \(name)", ["new", name]),
+                  let bottle = store.bottles.first(where: { $0.name == name }) else { return }
+            store.run(bottle, file)
+            ran(name)
         }
     }
 }

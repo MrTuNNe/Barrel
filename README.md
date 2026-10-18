@@ -48,6 +48,8 @@ Click **Install** the first time. It downloads about 250 MB. Then create a bottl
 
 To run something, drop a `.exe` onto the bottle or click **Run…**. Installed programs show up in the list. Right-click a program to add it to `~/Applications`.
 
+You can also open Windows programs straight from Finder. Barrel shows up under **Open With** for `.exe`, `.msi`, `.bat`, `.cmd` and `.lnk`. **Settings › Open .exe, .msi, .bat and .lnk with Barrel** makes it the default, so a double-click runs them. With one bottle the program runs there; with several, Barrel asks which one, with the last used one preselected.
+
 **Recent** lists what you launched lately with the renderer and HUD setting it ran with. ▶ runs it again with those settings. Barrel checks the file before every launch. If it's gone, or a shortcut's program was uninstalled, the entry says so and offers **Remove**. If you reinstall the program or plug the drive back in, it works again.
 
 ### Updates

@@ -45,6 +45,9 @@ private struct ListOutput: Codable {
 /// Talks to the `barrel` command-line tool, which holds all the Wine logic.
 @MainActor @Observable
 final class Store {
+    /// One store for the app, shared with the app delegate that receives files opened from Finder.
+    static let shared = Store()
+
     var bottles: [Bottle] = []
     var engines: [String] = []
     var runtime = ""
@@ -53,6 +56,7 @@ final class Store {
     var error: String?
     var notice: String?
     var appUpdate: AppRelease?  // a newer Barrel release to offer (AppUpdate.swift)
+    var openedFiles: [URL] = [] // files opened from Finder ("Open With", double-click), waiting to run
 
     var isInstalled: Bool { engines.contains { $0.hasPrefix("barrel-") || $0.hasPrefix("sikarugir-") } && !runtime.isEmpty }
 
@@ -149,7 +153,25 @@ final class Store {
         do { try p.run() } catch { self.error = error.localizedDescription }
     }
 
-    func run(_ bottle: Bottle, _ file: URL) { launch(bottle, ["run", bottle.name, file.path]) }
+    static let lastBottleKey = "lastBottle"
+
+    func run(_ bottle: Bottle, _ file: URL) {
+        UserDefaults.standard.set(bottle.name, forKey: Self.lastBottleKey)
+        launch(bottle, ["run", bottle.name, file.path])
+    }
+
+    /// The bottle a program opened from Finder goes to by default: the last one used.
+    var defaultBottle: Bottle? {
+        bottles.first { $0.name == UserDefaults.standard.string(forKey: Self.lastBottleKey) } ?? bottles.first
+    }
+
+    /// Runs the files opened from Finder. With a single bottle there's nothing to ask, so it runs
+    /// there; otherwise ContentView asks which bottle (OpenFileSheet). Waits until Wine is installed.
+    func runOpenedFiles() {
+        guard isInstalled, busy == nil, bottles.count == 1, let bottle = bottles.first else { return }
+        for file in openedFiles { run(bottle, file) }
+        openedFiles = []
+    }
 
     func recent(_ bottle: Bottle) async -> [RecentRun] {
         let (status, text) = await exec(["recent", bottle.name, "--json"], stream: false)

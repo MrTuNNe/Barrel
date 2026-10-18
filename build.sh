@@ -25,6 +25,36 @@ cat > "$app/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleDocumentTypes</key>
+  <array><dict>
+    <key>CFBundleTypeName</key><string>Windows program</string>
+    <key>CFBundleTypeRole</key><string>Viewer</string>
+    <key>LSHandlerRank</key><string>Default</string>
+    <key>LSItemContentTypes</key>
+    <array>
+      <string>com.microsoft.windows-executable</string>
+      <string>com.microsoft.msi-installer</string>
+      <string>com.microsoft.bat</string>
+      <string>com.microsoft.windows-shortcut</string>
+      <string>com.microsoft.windows-cmd</string>
+    </array>
+  </dict></array>
+  <!-- macOS has no types for .lnk and .cmd; describe them so Barrel can open them. -->
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.microsoft.windows-shortcut</string>
+      <key>UTTypeDescription</key><string>Windows shortcut</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>lnk</string></array></dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.microsoft.windows-cmd</string>
+      <key>UTTypeDescription</key><string>Windows command script</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>cmd</string></array></dict>
+    </dict>
+  </array>
 </dict></plist>
 EOF
 codesign --force --deep -s - "$app"
