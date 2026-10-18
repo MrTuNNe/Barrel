@@ -3,7 +3,9 @@
 set -euo pipefail
 cd "${0:A:h}"
 
-VERSION=${VERSION:-0.1.0}
+# The release workflow passes VERSION; local builds take it from the newest vX.Y.Z tag.
+VERSION=${VERSION:-$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null | sed 's/^v//')}
+VERSION=${VERSION:-0.0.0}
 swift build -c release --package-path app --arch arm64 --arch x86_64
 
 app=build/Barrel.app
