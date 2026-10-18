@@ -209,7 +209,31 @@ run_nwjs() {
   nw=$(newest "$DATA/nwjs" 'v*') || { info "First NW.js game: downloading NW.js for macOS (about 175 MB)…"; install_nwjs; nw=$(newest "$DATA/nwjs" 'v*') }
   [[ -f $app/package.json ]] || app=$app/package.nw
   info "${${app%/package.nw}:t}: an NW.js game (e.g. RPG Maker MV/MZ), running it with NW.js ${nw:t} for macOS"
+  [[ -f $app/package.json ]] && app=$(nwjs_manifest_fix "$app")
   exec "$nw/nwjs.app/Contents/MacOS/nwjs" "$app" "$@"
+}
+
+# nwjs_manifest_fix <game folder>: current NW.js refuses a package.json without a "name" ("Required
+# value 'name' is missing or invalid"), which many RPG Maker MV games ship because the old Windows
+# NW.js didn't check. For those, run from a shadow folder: a fixed package.json plus links to every
+# other file of the game, so it still loads (and saves) from the game's own folder. Prints the folder.
+nwjs_manifest_fix() {
+  local game=$1 slug shadow entry
+  if jq -e '.name | type == "string" and length > 0' "$game/package.json" >/dev/null 2>&1; then
+    print -r -- "$game"; return
+  fi
+  slug=${${${(L)game:t}//[^a-z0-9]/-}//--/-}; slug=${${slug#-}%-}; slug=${slug:-nwjs-game}
+  shadow="$DATA/nwjs-apps/$slug-$(md5 -qs "$game" | cut -c1-8)"
+  rm -rf "${shadow:?}"; mkdir -p "$shadow"
+  for entry in $game/*(DN); do
+    [[ ${entry:t} == package.json ]] || ln -s "$entry" "$shadow/${entry:t}"
+  done
+  if jq --arg name "$slug" '.name = $name' "$game/package.json" > "$shadow/package.json" 2>/dev/null; then
+    info "Its package.json has no valid \"name\", which NW.js for macOS needs; using \"$slug\" (the game's files stay as they are)." >&2
+    print -r -- "$shadow"
+  else
+    print -r -- "$game"   # not valid JSON either; let NW.js report it
+  fi
 }
 
 # Electron games work the same way: a Windows Electron runs their resources/app, which also runs
@@ -424,6 +448,19 @@ lnk_path() {
   print -r -- "$1/drive_${${t[1]}:l}/${${t:3}//\\//}"
 }
 
+# unquarantine <file>: macOS flags downloaded files, and Finder's "Open With" then refuses a flagged
+# .exe ("Apple could not verify… is free of malware"): it checks it like a Mac app, which a Windows
+# program can never pass. Once a program has been run through Barrel, clear the flag on its game
+# folder so later double-clicks work. Loose files in Downloads, Desktop… only get it cleared on themselves.
+unquarantine() {
+  xattr -p com.apple.quarantine "$1" >/dev/null 2>&1 || return 0
+  case ${1:h} in
+    ($HOME|$HOME/Downloads|$HOME/Desktop|$HOME/Documents|/Applications|/) xattr -d com.apple.quarantine "$1" 2>/dev/null ;;
+    (*) xattr -dr com.apple.quarantine "${1:h}" 2>/dev/null ;;
+  esac
+  return 0
+}
+
 # record_run <bottle> <file>: remember a launch and its settings (newest first, 12 at most).
 # Installers and uninstallers aren't worth replaying, so they're left out.
 record_run() {
@@ -483,7 +520,7 @@ cmd_run() {
     fi
   fi
   [[ -n $native ]] && RENDERER=$native
-  [[ -f $f ]] && record_run "$b" "$f"
+  [[ -f $f ]] && { record_run "$b" "$f"; unquarantine "$f"; [[ -n $exe && $exe != $f ]] && unquarantine "$exe" }
   [[ $native == nwjs ]] && run_nwjs "${exe:h}" "$@"
   [[ $native == electron ]] && run_electron "${exe:h}" "$@"
   wine_env "$b" $bits

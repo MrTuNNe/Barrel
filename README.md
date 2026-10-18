@@ -60,7 +60,7 @@ Click **Install** the first time. It downloads about 250 MB. Then create a bottl
 
 To run something, drop a `.exe` onto the bottle or click **Run…**. Installed programs show up in the list. Right-click a program to add it to `~/Applications`.
 
-You can also open Windows programs straight from Finder. Barrel shows up under **Open With** for `.exe`, `.msi`, `.bat`, `.cmd` and `.lnk`. **Settings › Open .exe, .msi, .bat and .lnk with Barrel** makes it the default, so a double-click runs them. With one bottle the program runs there; with several, Barrel asks which one, with the last used one preselected.
+You can also open Windows programs straight from Finder. macOS flags downloaded files, and **Open With** refuses a flagged `.exe` (*Apple could not verify… is free of malware*): it checks it like a Mac app, which a Windows program can never pass. So run a newly downloaded game once by dropping it on Barrel or with **Run…**. Barrel then clears the flag on that game's folder, or only on the file itself when it's loose in Downloads, Desktop or Documents, and double-clicks work from then on. Barrel shows up under **Open With** for `.exe`, `.msi`, `.bat`, `.cmd` and `.lnk`. **Settings › Open .exe, .msi, .bat and .lnk with Barrel** makes it the default, so a double-click runs them. With one bottle the program runs there; with several, Barrel asks which one, with the last used one preselected.
 
 **Recent** lists what you launched lately with the renderer and HUD setting it ran with. ▶ runs it again with those settings. Barrel checks the file before every launch. If it's gone, or a shortcut's program was uninstalled, the entry says so and offers **Remove**. If you reinstall the program or plug the drive back in, it works again.
 
@@ -102,6 +102,8 @@ DirectX 9 always works. With `d3dmetal` and `dxmt` it goes through wined3d.
 Games made with NW.js (RPG Maker MV and MZ, and many other JavaScript games) ship a Windows build of NW.js, which rarely starts under Wine. Their game files run fine on the macOS build of NW.js. When you run such a game's `.exe`, Barrel spots it (`package.json` or `package.nw` next to `nw.dll`, `nw.pak`…) and starts it with NW.js for macOS. NW.js is downloaded the first time, about 175 MB.
 
 Electron games work the same way. They have a `resources/app` (or `app.asar`) next to a `version` file, and Barrel runs them with the macOS build of that exact Electron version, downloaded once per version (about 100 MB). Games with Windows-only native modules (`.node` files) may still need Wine.
+
+Many RPG Maker MV games ship a `package.json` without a `name`. The old Windows NW.js didn't mind, but current NW.js stops with *Required value 'name' is missing or invalid*. For those games, Barrel runs NW.js from a shadow folder with a fixed `package.json` and links to the rest of the game, so the game's own files are left untouched.
 
 NW.js games keep their saves in the game's folder, as on Windows. To run a game through Wine anyway, turn off **Run JavaScript games natively** for the bottle (`barrel set <bottle> native off`). Games packed into a single `.exe` (Enigma Virtual Box) can't be spotted, so they still go through Wine.
 
