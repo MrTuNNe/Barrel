@@ -27,6 +27,11 @@ cat > "$app/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSDownloadsFolderUsageDescription</key><string>Barrel runs the Windows programs and games you keep in Downloads.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Barrel runs the Windows programs and games you keep on the Desktop.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Barrel runs the Windows programs and games you keep in Documents.</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>Barrel runs Windows programs and games from external drives.</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>Barrel runs Windows programs and games from network drives.</string>
   <key>CFBundleDocumentTypes</key>
   <array><dict>
     <key>CFBundleTypeName</key><string>Windows program</string>
@@ -59,5 +64,7 @@ cat > "$app/Contents/Info.plist" <<EOF
   </array>
 </dict></plist>
 EOF
-codesign --force --deep -s - "$app"
+# Ad-hoc signatures default to the binary's hash as the app's identity, so macOS forgets granted
+# folder permissions on every build and update. Tie the identity to the bundle id instead.
+codesign --force -s - -r '=designated => identifier "app.barrel.Barrel"' "$app"
 echo "Built $app"
